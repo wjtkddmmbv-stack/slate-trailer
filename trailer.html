@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Slate trailer</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}#p{position:absolute;left:0;top:0;width:100vw;height:100vh}</style></head>
+<body><div id="p"></div><script>
+/* Slate's trailer player: YouTube's embedded player only plays from a web page, so Slate shows this page in a frame
+   and talks to it with messages. ?v=<YouTube id>&mute=1 */
+var q = location.search, key = (q.match(/[?&]v=([\w-]+)/) || [])[1], mute = /[?&]mute=1/.test(q), player, tick;
+function send(m) { try { parent.postMessage(JSON.stringify(m), '*'); } catch (e) {} }
+window.addEventListener('message', function (e) {
+  var m; try { m = JSON.parse(e.data); } catch (x) { return; }
+  if (!player || !m || !m.cmd) return;
+  try {
+    if (m.cmd === 'toggle') { if (player.getPlayerState() === 1) player.pauseVideo(); else player.playVideo(); }
+    if (m.cmd === 'pause') player.pauseVideo();
+    if (m.cmd === 'play') player.playVideo();
+    if (m.cmd === 'seek') player.seekTo(Math.max(0, player.getCurrentTime() + m.by), true);
+    if (m.cmd === 'unmute') { player.unMute(); player.setVolume(100); }
+    if (m.cmd === 'stop') { clearInterval(tick); player.stopVideo(); }
+  } catch (x) {}
+});
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player('p', { videoId: key, playerVars: { autoplay: 1, controls: 0, rel: 0, playsinline: 1, iv_load_policy: 3, disablekb: 1, fs: 0, mute: mute ? 1 : 0, cc_load_policy: 0 },
+    events: {
+      onReady: function (e) { if (mute) e.target.mute(); try { e.target.setPlaybackQuality('hd720'); } catch (x) {} e.target.playVideo(); send({ ev: 'ready' }); },
+      onStateChange: function (e) { send({ ev: 'state', v: e.data }); },
+      onError: function (e) { send({ ev: 'error', v: e.data }); } } });
+  tick = setInterval(function () { try { if (player.getDuration) send({ ev: 'time', t: player.getCurrentTime(), d: player.getDuration(), s: player.getPlayerState() }); } catch (x) {} }, 500);
+}
+</script><script src="https://www.youtube.com/iframe_api"></script></body></html>
