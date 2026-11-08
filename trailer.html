@@ -1,28 +1,60 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Slate trailer</title>
-<style>html,body{margin:0;background:#000;overflow:hidden}#p{position:absolute;left:0;top:0;width:100vw;height:100vh}</style></head>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Slate trailer</title>
+<style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}#p,iframe{position:fixed;left:0;top:0;width:100%!important;height:100%!important;border:0}</style></head>
 <body><div id="p"></div><script>
-/* Slate's trailer player: YouTube's embedded player only plays from a web page, so Slate shows this page in a frame
-   and talks to it with messages. ?v=<YouTube id>&mute=1 */
-var q = location.search, key = (q.match(/[?&]v=([\w-]+)/) || [])[1], mute = /[?&]mute=1/.test(q), player, tick;
+/* Slate's trailer player. YouTube's embedded player only plays from a web page, so Slate shows this page in a frame
+   and talks to it with messages.
+   ?warm=1   loads YouTube's player with no video, ready for {cmd:'load', key, mute} (opens trailers much faster);
+             {cmd:'cue', key} gets a trailer ready without playing it
+   ?v=<id>   plays that video straight away (older Slate versions) */
+var cued = '', primed = false, priming = false, q = location.search, key = (q.match(/[?&]v=([\w-]+)/) || [])[1], mute = /[?&]mute=1/.test(q), player, tick, ready = false;
 function send(m) { try { parent.postMessage(JSON.stringify(m), '*'); } catch (e) {} }
+function size() { var f = document.querySelector('iframe'); send({ ev: 'size', w: innerWidth, h: innerHeight, fw: f ? f.offsetWidth : 0, fh: f ? f.offsetHeight : 0 }); }
 window.addEventListener('message', function (e) {
   var m; try { m = JSON.parse(e.data); } catch (x) { return; }
-  if (!player || !m || !m.cmd) return;
+  if (!player || !m || !m.cmd || !ready) return;
   try {
+    if (m.cmd === 'load') {
+      priming = false; primed = true;
+      if (m.mute) player.mute(); else { player.unMute(); player.setVolume(100); }
+      /* The trailer that was got ready: just start it. */
+      if (m.key === cued) { player.seekTo(0, true); player.playVideo(); }
+      else player.loadVideoById({ videoId: m.key, suggestedQuality: 'hd1080' });
+      cued = '';
+    }
+    /* The trailer is played silently for a moment and paused, so its start is loaded and the TV's video decoder is
+       running when Trailer is pressed (otherwise it took 3-9 seconds). */
+    if (m.cmd === 'cue' && m.key !== cued) {
+      cued = m.key; player.mute();
+      priming = true; player.loadVideoById({ videoId: m.key, suggestedQuality: 'hd1080' });
+    }
     if (m.cmd === 'toggle') { if (player.getPlayerState() === 1) player.pauseVideo(); else player.playVideo(); }
     if (m.cmd === 'pause') player.pauseVideo();
     if (m.cmd === 'play') player.playVideo();
     if (m.cmd === 'seek') player.seekTo(Math.max(0, player.getCurrentTime() + m.by), true);
     if (m.cmd === 'unmute') { player.unMute(); player.setVolume(100); }
-    if (m.cmd === 'stop') { clearInterval(tick); player.stopVideo(); }
+    if (m.cmd === 'stop') { player.stopVideo(); cued = ''; }
+    if (m.cmd === 'size') size();
   } catch (x) {}
 });
 function onYouTubeIframeAPIReady() {
-  player = new YT.Player('p', { videoId: key, playerVars: { autoplay: 1, controls: 0, rel: 0, playsinline: 1, iv_load_policy: 3, disablekb: 1, fs: 0, mute: mute ? 1 : 0, cc_load_policy: 0 },
+  var opts = { width: '100%', height: '100%',
+    playerVars: { autoplay: key ? 1 : 0, controls: 0, rel: 0, playsinline: 1, iv_load_policy: 3, disablekb: 1, fs: 0, mute: mute ? 1 : 0, cc_load_policy: 0 },
     events: {
-      onReady: function (e) { if (mute) e.target.mute(); try { e.target.setPlaybackQuality('hd720'); } catch (x) {} e.target.playVideo(); send({ ev: 'ready' }); },
-      onStateChange: function (e) { send({ ev: 'state', v: e.data }); },
-      onError: function (e) { send({ ev: 'error', v: e.data }); } } });
-  tick = setInterval(function () { try { if (player.getDuration) send({ ev: 'time', t: player.getCurrentTime(), d: player.getDuration(), s: player.getPlayerState() }); } catch (x) {} }, 500);
+      onReady: function (e) {
+        ready = true;
+        if (key) { if (mute) e.target.mute(); e.target.playVideo(); send({ ev: 'ready' }); }
+        else send({ ev: 'warm' });
+        size();
+      },
+      onStateChange: function (e) {
+        if (priming) { if (e.data === 1) { priming = false; primed = true; player.pauseVideo(); player.seekTo(0, true); } return; }
+        send({ ev: 'state', v: e.data });
+      },
+      onError: function (e) { send({ ev: 'error', v: e.data }); } } };
+  if (key) opts.videoId = key;
+  player = new YT.Player('p', opts);
+  tick = setInterval(function () {
+    try { var s = player.getPlayerState(); if (!priming && (s === 1 || s === 2 || s === 3)) send({ ev: 'time', t: player.getCurrentTime(), d: player.getDuration(), s: s }); } catch (x) {}
+  }, 500);
 }
 </script><script src="https://www.youtube.com/iframe_api"></script></body></html>
